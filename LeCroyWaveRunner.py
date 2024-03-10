@@ -513,21 +513,34 @@ class LeCroyWaveRunner:
 			time.sleep(.1)
 			if timeout >= 0 and time.time() - start > timeout:
 				raise RuntimeError(f'Timed out waiting for oscilloscope to trigger after {timeout} seconds.')
+
+	@property
+	def trigMode(self):
+		return self.query('TRIG_MODE?')
 	
+	@trigMode.setter
 	def trigMode(self, mode: str):
+		# See https://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=152
 		"""Sets the trigger mode.
 		Parameterers
 		------------
 		mode : str
-		AUTO
-		NORM
-		STOP
-		SINGLE
+		AUTO,NORM,SINGLE,STOP
+		• NORM — When NORMAL If the trigger signal is satisfied,
+		the running state shows Trig'd, and the interface shows
+		stable waveform.
+		Otherwise, the running state shows Ready, and
+		the interface displays the last triggered
+		waveform (previous trigger) or does not
+		display the waveform (no previous trigger)
+		• SINGLE —If the trigger signal is satisfied, the running
+		state shows Trig'd, and the interface shows
+		stable waveform. Then, the oscilloscope stops
+		scanning, the RUN/STOP key is red light, and
+		the running status shows Stop.
 		"""
-		OPTIONS = ['AUTO', 'NORM', 'STOP', 'SINGLE']
-		if mode.upper() not in OPTIONS:
-			raise ValueError('<mode> must be one of ' + str(OPTIONS))
-		self.write('TRIG_MODE ' + mode)
+		self.write(f'TRIG_MODE {mode}')
+
 	@property
 	def trigSource(self):
 		"""Returns the trigger source as a string."""
@@ -542,6 +555,7 @@ class LeCroyWaveRunner:
 		string += '"' + source + '"'
 		string += "'"
 		self.write(string)
+
 	@property
 	def trigCoupling(self):
 		return self.write('TRIG_COUPLING?')
