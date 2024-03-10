@@ -510,7 +510,7 @@ class LeCroyWaveRunner:
 		self.write(msg)
 		return self.read()
 	
-	def wait_for_single_trigger(self,timeout=-1):
+	def waitTrigger(self,timeout=-1):
 		"""Sets the trigger in 'SINGLE' and blocks the execution of the
 		program until the oscilloscope triggers.
 		- timeout: float, number of seconds to wait until rising a 
@@ -526,19 +526,20 @@ class LeCroyWaveRunner:
 			if timeout >= 0 and time.time() - start > timeout:
 				raise RuntimeError(f'Timed out waiting for oscilloscope to trigger after {timeout} seconds.')
 	
-	def set_trig_mode(self, mode: str):
+	def trigMode(self, mode: str):
 		"""Sets the trigger mode."""
 		OPTIONS = ['AUTO', 'NORM', 'STOP', 'SINGLE']
 		if mode.upper() not in OPTIONS:
 			raise ValueError('<mode> must be one of ' + str(OPTIONS))
 		self.write('TRIG_MODE ' + mode)
-
-	def get_trig_source(self):
+	@property
+	def trigSource(self):
 		"""Returns the trigger source as a string."""
 		# See http://cdn.teledynelecroy.com/files/manuals/automation_command_ref_manual_ws.pdf#page=34
 		return str(self.query("VBS? 'return=app.Acquisition.Trigger.Source'"))
 	
-	def set_trig_source(self, source: str):
+	@trigSource.setter
+	def trigSource(self, source: str):
 		"""Sets the trigger source (C1, C2, Ext, etc.)."""
 		# See http://cdn.teledynelecroy.com/files/manuals/automation_command_ref_manual_ws.pdf#page=34
 		_validate_trig_source(source)
@@ -547,7 +548,7 @@ class LeCroyWaveRunner:
 		string += "'"
 		self.write(string)
 	
-	def set_trig_coupling(self, trig_source: str, trig_coupling: str):
+	def trigCoupling(self, trig_source: str, trig_coupling: str):
 		"""Set the trigger coupling (DC, AC, etc.)."""
 		# See http://cdn.teledynelecroy.com/files/manuals/automation_command_ref_manual_ws.pdf#page=37
 		_validate_trig_source(trig_source)
@@ -559,7 +560,7 @@ class LeCroyWaveRunner:
 		string += "'"
 		self.write(string)
 	
-	def set_trig_level(self, trig_source: str, level: float):
+	def trigLevel(self, trig_source: str, level: float):
 		"""Set the trigger level."""
 		# See http://cdn.teledynelecroy.com/files/manuals/automation_command_ref_manual_ws.pdf#page=36
 		_validate_trig_source(trig_source)
@@ -570,7 +571,7 @@ class LeCroyWaveRunner:
 		string += "'"
 		self.write(string)
 	
-	def set_trig_slope(self, trig_source: str, trig_slope: str):
+	def trigSlope(self, trig_source: str, trig_slope: str):
 		"""Set the trigger slope (Positive, negative, either)."""
 		# See http://cdn.teledynelecroy.com/files/manuals/automation_command_ref_manual_ws.pdf#page=36
 		_validate_trig_source(trig_source)
@@ -582,14 +583,14 @@ class LeCroyWaveRunner:
 		string += "'"
 		self.write(string)
 	
-	def set_trig_delay(self, trig_delay: float):
+	def trigDelay(self, trig_delay: float):
 		"""Set the trig delay, i.e. the time interval between the trigger event and the center of the screen."""
 		# See http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=152
 		if not isinstance(trig_delay, (float, int)):
 			raise ValueError(f'The trigger delay must be a number, received object of type {type(trig_delay)}.')
 		self.write(f'TRIG_DELAY {trig_delay}')
 	
-	def sampling_mode_sequence(self, status:str, number_of_segments:int=None)->None:
+	def samplingModeSequence(self, status:str, number_of_segments:int=None)->None:
 		"""Configure the "sampling mode sequence" in the oscilloscope. See
 		[here](https://cdn.teledynelecroy.com/files/manuals/maui-remote-control-automation_27jul22.pdf#%5B%7B%22num%22%3A1235%2C%22gen%22%3A0%7D%2C%7B%22name%22%3A%22XYZ%22%7D%2C54%2C743.25%2C0%5D).
 		
@@ -610,7 +611,7 @@ class LeCroyWaveRunner:
 			cmd += f',{number_of_segments}'
 		self.write(cmd)
 	
-	def set_sequence_timeout(self, sequence_timeout:float, enable_sequence_timeout:bool=True):
+	def sequenceTimeout(self, sequence_timeout:float, enable_sequence_timeout:bool=True):
 		"""Configures the "Sequence timeout" in the oscilloscope both value
 		and enable/disable.
 		
@@ -629,10 +630,12 @@ class LeCroyWaveRunner:
 		self.write(f"VBS 'app.Acquisition.Horizontal.SequenceTimeout = {sequence_timeout}'")
 		self.write(f"VBS 'app.Acquisition.Horizontal.SequenceTimeoutEnable = {enable_sequence_timeout}'")
 
-
-
 	class Channel:
-		def get_waveform(self, n_channel:int)->dict:
+
+		def __init__(self,channel:int):
+			self._channel= channel
+
+		def get_waveform(self)->dict:
 			"""Gets the waveform(s) from the specified channel.
 			
 			Arguments
@@ -671,12 +674,12 @@ class LeCroyWaveRunner:
 				on these read the text that the oscilloscope provides by
 				querying `'TMPL?'`.
 			"""
-			_validate_channel_number(n_channel)
+			_validate_channel_number(self._channel)
 			
 			self.write('CORD HI') # High-Byte first
 			self.write('COMM_FORMAT DEF9,WORD,BIN') # Communication Format: DEF9 (this is the #9 specification; WORD (reads the samples as 2 Byte integer; BIN (reads in Binary)
 			self.write('CHDR OFF') # Command Header OFF (fewer characters to transfer)
-			self.write(f'C{n_channel}:WF?')
+			self.write(f'C{self._channel}:WF?')
 			time.sleep(.1)
 			raw_bytes = self.resource.read_raw()
 			raw_bytes = raw_bytes[15:] # This I don't understand, the first 15 bytes are some kind of garbage... But this is happening always.
@@ -704,7 +707,7 @@ class LeCroyWaveRunner:
 				'waveforms': [{'Time (s)': t, f'Amplitude ({parsed_wavedesc_block["VERTUNIT"]})': s} for t,s in zip(times,samples)],
 			}
 			
-		def get_triggers_times(self, channel: int)->list:
+		def triggerTimeas(self, int)->list:
 			"""Gets the trigger times (with respect to the first trigger). What
 			this function returns is the list of numbers you find if you go
 			in the oscilloscope window to "Timebase→Sequence→Show Sequence Trigger Times...→since Segment 1"
@@ -719,31 +722,37 @@ class LeCroyWaveRunner:
 			trigger_times: list
 				A list of trigger times in seconds from the first trigger.
 			"""
-			_validate_channel_number(channel)
-			raw = self.query(f"VBS? 'return=app.Acquisition.Channels(\"C{channel}\").TriggerTimeFromRef'") # To know this command I used the `XStream Browser` app in the oscilloscope's desktop.
+			_validate_channel_number(self._channel)
+			raw = self.query(f"VBS? 'return=app.Acquisition.Channels(\"C{self._channel}\").TriggerTimeFromRef'") # To know this command I used the `XStream Browser` app in the oscilloscope's desktop.
 			raw = [int(i) for i in raw.split(',') if i != '']
 			datetimes = [datetime.datetime.fromtimestamp(i/1e10) for i in raw] # Don't know why we have to divide by 1e10, but it works...
 			datetimes = [i-datetimes[0] for i in datetimes]
 			return [i.total_seconds() for i in datetimes]
-
-		
-		def set_vdiv(self, channel: int, vdiv: float):
+		@property
+		def vdiv(self):
+			"""Gets the vertical scale of the specified channel. Returns a 
+			float number with the volts/div value."""
+			_validate_channel_number(self._channel)
+			return float(self.query(f'C{self._channel}:VDIV?')) # http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=47
+	
+		@vdiv.setter
+		def vdiv(self, vdiv: float):
 			"""Sets the vertical scale for the specified channel."""
 			try:
 				vdiv = float(vdiv)
 			except:
 				raise TypeError(f'<vdiv> must be a float number, received object of type {type(vdiv)}.')
-			_validate_channel_number(channel)
-			self.write(f'C{channel}:VDIV {float(vdiv)}') # http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=47
+			_validate_channel_number(self._channel)
+			self.write(f'C{self._channel}:VDIV {float(vdiv)}') # http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=47
 
-		def set_voffset(self, channel: int, voffset: float):
+		def voffset(self, voffset: float):
 			"""Sets the vertical offset for the specified channel."""
 			try:
 				voffset = float(voffset)
 			except:
 				raise TypeError(f'<voffset> must be a float number, received object of type {type(voffset)}.')
-			_validate_channel_number(channel)
-			self.write(f'C{channel}:OFST {float(voffset)}') # http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=43
+			_validate_channel_number(self._channel)
+			self.write(f'C{self._channel}:OFST {float(voffset)}') # http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=43
 		
 		def set_tdiv(self, tdiv: str):
 			"""Sets the horizontal scale per division for the main window."""
@@ -753,9 +762,3 @@ class LeCroyWaveRunner:
 				raise ValueError(f'tdiv must be one of {VALID_TDIVs}, received {repr(tdiv)}.')
 			self.write(f'TDIV {tdiv}')
 
-		def get_vdiv(self, channel: int):
-			"""Gets the vertical scale of the specified channel. Returns a 
-			float number with the volts/div value."""
-			_validate_channel_number(channel)
-			return float(self.query(f'C{channel}:VDIV?')) # http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=47
-	
