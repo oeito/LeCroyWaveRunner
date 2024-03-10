@@ -473,41 +473,16 @@ def parse_trigtime_block(raw_bytes:bytes, parsed_wavedesc_block:dict)->list:
 
 class LeCroyWaveRunner:
 	def __init__(self, resource_name:str):
-		"""This is a wrapper class for a pyvisa Resource object to communicate
-		with a LeCroy oscilloscope.
-		
-		Parameters
-		----------
-		resource_name: str
-			Whatever you have to provide to `pyvisa` to open the connection
-			with the oscilloscope, see [here](https://pyvisa.readthedocs.io/en/latest/api/resourcemanager.html#pyvisa.highlevel.ResourceManager.open_resource).
-			Example: "USB0::0x05ff::0x1023::4751N40408::INSTR"
-		"""
-		if not isinstance(resource_name, str):
-			raise TypeError(f'<resource_name> must be a string, received object of type {type(resource_name)}')
-		
-		# The following ugly connection method is to avoid issues I found in my system.
+
 		try:
-			oscilloscope = pyvisa.ResourceManager('@ivi').open_resource(resource_name)
-		except pyvisa.errors.VisaIOError:
-			try:
-				pyvisa.ResourceManager('@py').open_resource(resource_name) # This I already know it won't work, but it triggers something that makes the `@ivi` to work.
-			except:
-				pass
-			oscilloscope = pyvisa.ResourceManager('@ivi').open_resource(resource_name) # Now this works. Don't ask me.
-		except OSError as e:
-			if 'Could not open VISA library' in str(e):
-				# Let us try with the pyvisa library.
-				oscilloscope = pyvisa.ResourceManager('@py').open_resource(resource_name)
-			else:
-				raise e
-		
-		self.resource = oscilloscope
+			rm = pyvisa.ResourceManager('@py')
+			self.resource = rm.open_resource(resource_name)
+		except:
+				print('Pyvisa not installed')
+				raise
 		
 		self.write('CHDR OFF') # This is to receive only numerical data in the answers and not also the echo of the command and some other stuff. See p. 22 of http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf
-		
-		if 'lecroy' not in self.idn.lower():
-			raise RuntimeError(f'The instrument you provided does not seem to be a LeCroy oscilloscope, its name is {repr(self.idn)}.')
+
 	
 	@property
 	def idn(self):
@@ -515,6 +490,9 @@ class LeCroyWaveRunner:
 		command "*IDN?"."""
 		return  self.query('*IDN?')
 	
+	def close(self):
+		self.resource.close()
+
 	def write(self, msg):
 		"""Sends a command to the instrument."""
 		self.resource.write(msg)
@@ -531,100 +509,6 @@ class LeCroyWaveRunner:
 		answer."""
 		self.write(msg)
 		return self.read()
-	
-	def get_waveform(self, n_channel:int)->dict:
-		"""Gets the waveform(s) from the specified channel.
-		
-		Arguments
-		---------
-		n_channel: int
-			Number of channel from which to get the waveform data.
-		
-		Returns
-		-------
-		data: dict
-			Returns a dictionary of the form
-			```
-			{
-				'waveforms': [{'Time (s)': t, f'Amplitude (V)': s} for t,s in zip(times,samples)],
-				'wavedesc': parsed_wavedesc_block,
-				'trigtime': parsed_trigtime_block,
-			}
-			```
-			
-			The most important field is the `'waveforms'` field, which is
-			a list of dictionaries, each of the form
-			```
-			{
-				'Time (s)': numpy.array,
-				'Amplitude (V)': numpy.array,
-			}
-			```
-			containing each of the waveforms (many waveforms if TimeBase→Sequence
-			is enabled, a single waveform if TimeBase→RealTime is enabled). Note
-			that if multiple waveforms are present in the oscilloscope, they
-			are split internally such that each element of this list is
-			a whole waveform on its own.
-			
-			The fields `'wavedesc'` and `'trigtime'` contain additional
-			information provided by the oscilloscope, for more information
-			on these read the text that the oscilloscope provides by
-			querying `'TMPL?'`.
-		"""
-		_validate_channel_number(n_channel)
-		
-		self.write('CORD HI') # High-Byte first
-		self.write('COMM_FORMAT DEF9,WORD,BIN') # Communication Format: DEF9 (this is the #9 specification; WORD (reads the samples as 2 Byte integer; BIN (reads in Binary)
-		self.write('CHDR OFF') # Command Header OFF (fewer characters to transfer)
-		self.write(f'C{n_channel}:WF?')
-		time.sleep(.1)
-		raw_bytes = self.resource.read_raw()
-		raw_bytes = raw_bytes[15:] # This I don't understand, the first 15 bytes are some kind of garbage... But this is happening always.
-		
-		parsed_wavedesc_block = parse_wavedesc_block(raw_bytes)
-		samples = parse_data_array_1_block(raw_bytes, parsed_wavedesc_block)
-		parsed_trigtime_block = parse_trigtime_block(raw_bytes, parsed_wavedesc_block)
-		
-		n_samples_per_trigger = int(len(samples)/parsed_wavedesc_block['SUBARRAY_COUNT'])
-		samples = [np.array(samples[i*n_samples_per_trigger:(i+1)*n_samples_per_trigger]) for i in range(parsed_wavedesc_block['SUBARRAY_COUNT'])]#np.array(samples).reshape((parsed_wavedesc_block['SUBARRAY_COUNT'],n_samples_per_trigger))
-		
-		time_array = np.arange(
-			start = 0,
-			stop = parsed_wavedesc_block['HORIZ_INTERVAL']*(n_samples_per_trigger), 
-			step = parsed_wavedesc_block['HORIZ_INTERVAL'],
-		)# + parsed_wavedesc_block['HORIZ_OFFSET']
-		times = [np.copy(time_array) for i in range(parsed_wavedesc_block['SUBARRAY_COUNT'])]
-		
-		for i,trigtime in enumerate(parsed_trigtime_block):
-			times[i] += trigtime['TRIGGER_OFFSET']
-		
-		return {
-			'wavedesc': parsed_wavedesc_block,
-			'trigtime': parsed_trigtime_block,
-			'waveforms': [{'Time (s)': t, f'Amplitude ({parsed_wavedesc_block["VERTUNIT"]})': s} for t,s in zip(times,samples)],
-		}
-		
-	def get_triggers_times(self, channel: int)->list:
-		"""Gets the trigger times (with respect to the first trigger). What
-		this function returns is the list of numbers you find if you go
-		in the oscilloscope window to "Timebase→Sequence→Show Sequence Trigger Times...→since Segment 1"
-		
-		Arguments
-		---------
-		channel: int
-			Number of channel from which to get the data.
-		
-		Returns
-		-------
-		trigger_times: list
-			A list of trigger times in seconds from the first trigger.
-		"""
-		_validate_channel_number(channel)
-		raw = self.query(f"VBS? 'return=app.Acquisition.Channels(\"C{channel}\").TriggerTimeFromRef'") # To know this command I used the `XStream Browser` app in the oscilloscope's desktop.
-		raw = [int(i) for i in raw.split(',') if i != '']
-		datetimes = [datetime.datetime.fromtimestamp(i/1e10) for i in raw] # Don't know why we have to divide by 1e10, but it works...
-		datetimes = [i-datetimes[0] for i in datetimes]
-		return [i.total_seconds() for i in datetimes]
 	
 	def wait_for_single_trigger(self,timeout=-1):
 		"""Sets the trigger in 'SINGLE' and blocks the execution of the
@@ -648,39 +532,7 @@ class LeCroyWaveRunner:
 		if mode.upper() not in OPTIONS:
 			raise ValueError('<mode> must be one of ' + str(OPTIONS))
 		self.write('TRIG_MODE ' + mode)
-	
-	def set_vdiv(self, channel: int, vdiv: float):
-		"""Sets the vertical scale for the specified channel."""
-		try:
-			vdiv = float(vdiv)
-		except:
-			raise TypeError(f'<vdiv> must be a float number, received object of type {type(vdiv)}.')
-		_validate_channel_number(channel)
-		self.write(f'C{channel}:VDIV {float(vdiv)}') # http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=47
 
-	def set_voffset(self, channel: int, voffset: float):
-		"""Sets the vertical offset for the specified channel."""
-		try:
-			voffset = float(voffset)
-		except:
-			raise TypeError(f'<voffset> must be a float number, received object of type {type(voffset)}.')
-		_validate_channel_number(channel)
-		self.write(f'C{channel}:OFST {float(voffset)}') # http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=43
-	
-	def set_tdiv(self, tdiv: str):
-		"""Sets the horizontal scale per division for the main window."""
-		# See http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=151
-		VALID_TDIVs = ['1NS','2NS','5NS','10NS','20NS','50NS','100NS','200NS','500NS','1US','2US','5US','10US','20US','50US','100US','200US','500US','1MS','2MS','5MS','10MS','20MS','50MS','100MS','200MS','500MS','1S','2S','5S','10S','20S','50S','100S']
-		if not isinstance(tdiv, str) or tdiv.lower() not in {t.lower() for t in VALID_TDIVs}:
-			raise ValueError(f'tdiv must be one of {VALID_TDIVs}, received {repr(tdiv)}.')
-		self.write(f'TDIV {tdiv}')
-
-	def get_vdiv(self, channel: int):
-		"""Gets the vertical scale of the specified channel. Returns a 
-		float number with the volts/div value."""
-		_validate_channel_number(channel)
-		return float(self.query(f'C{channel}:VDIV?')) # http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=47
-	
 	def get_trig_source(self):
 		"""Returns the trigger source as a string."""
 		# See http://cdn.teledynelecroy.com/files/manuals/automation_command_ref_manual_ws.pdf#page=34
@@ -777,3 +629,133 @@ class LeCroyWaveRunner:
 		self.write(f"VBS 'app.Acquisition.Horizontal.SequenceTimeout = {sequence_timeout}'")
 		self.write(f"VBS 'app.Acquisition.Horizontal.SequenceTimeoutEnable = {enable_sequence_timeout}'")
 
+
+
+	class Channel:
+		def get_waveform(self, n_channel:int)->dict:
+			"""Gets the waveform(s) from the specified channel.
+			
+			Arguments
+			---------
+			n_channel: int
+				Number of channel from which to get the waveform data.
+			
+			Returns
+			-------
+			data: dict
+				Returns a dictionary of the form
+				```
+				{
+					'waveforms': [{'Time (s)': t, f'Amplitude (V)': s} for t,s in zip(times,samples)],
+					'wavedesc': parsed_wavedesc_block,
+					'trigtime': parsed_trigtime_block,
+				}
+				```
+				
+				The most important field is the `'waveforms'` field, which is
+				a list of dictionaries, each of the form
+				```
+				{
+					'Time (s)': numpy.array,
+					'Amplitude (V)': numpy.array,
+				}
+				```
+				containing each of the waveforms (many waveforms if TimeBase→Sequence
+				is enabled, a single waveform if TimeBase→RealTime is enabled). Note
+				that if multiple waveforms are present in the oscilloscope, they
+				are split internally such that each element of this list is
+				a whole waveform on its own.
+				
+				The fields `'wavedesc'` and `'trigtime'` contain additional
+				information provided by the oscilloscope, for more information
+				on these read the text that the oscilloscope provides by
+				querying `'TMPL?'`.
+			"""
+			_validate_channel_number(n_channel)
+			
+			self.write('CORD HI') # High-Byte first
+			self.write('COMM_FORMAT DEF9,WORD,BIN') # Communication Format: DEF9 (this is the #9 specification; WORD (reads the samples as 2 Byte integer; BIN (reads in Binary)
+			self.write('CHDR OFF') # Command Header OFF (fewer characters to transfer)
+			self.write(f'C{n_channel}:WF?')
+			time.sleep(.1)
+			raw_bytes = self.resource.read_raw()
+			raw_bytes = raw_bytes[15:] # This I don't understand, the first 15 bytes are some kind of garbage... But this is happening always.
+			
+			parsed_wavedesc_block = parse_wavedesc_block(raw_bytes)
+			samples = parse_data_array_1_block(raw_bytes, parsed_wavedesc_block)
+			parsed_trigtime_block = parse_trigtime_block(raw_bytes, parsed_wavedesc_block)
+			
+			n_samples_per_trigger = int(len(samples)/parsed_wavedesc_block['SUBARRAY_COUNT'])
+			samples = [np.array(samples[i*n_samples_per_trigger:(i+1)*n_samples_per_trigger]) for i in range(parsed_wavedesc_block['SUBARRAY_COUNT'])]#np.array(samples).reshape((parsed_wavedesc_block['SUBARRAY_COUNT'],n_samples_per_trigger))
+			
+			time_array = np.arange(
+				start = 0,
+				stop = parsed_wavedesc_block['HORIZ_INTERVAL']*(n_samples_per_trigger), 
+				step = parsed_wavedesc_block['HORIZ_INTERVAL'],
+			)# + parsed_wavedesc_block['HORIZ_OFFSET']
+			times = [np.copy(time_array) for i in range(parsed_wavedesc_block['SUBARRAY_COUNT'])]
+			
+			for i,trigtime in enumerate(parsed_trigtime_block):
+				times[i] += trigtime['TRIGGER_OFFSET']
+			
+			return {
+				'wavedesc': parsed_wavedesc_block,
+				'trigtime': parsed_trigtime_block,
+				'waveforms': [{'Time (s)': t, f'Amplitude ({parsed_wavedesc_block["VERTUNIT"]})': s} for t,s in zip(times,samples)],
+			}
+			
+		def get_triggers_times(self, channel: int)->list:
+			"""Gets the trigger times (with respect to the first trigger). What
+			this function returns is the list of numbers you find if you go
+			in the oscilloscope window to "Timebase→Sequence→Show Sequence Trigger Times...→since Segment 1"
+			
+			Arguments
+			---------
+			channel: int
+				Number of channel from which to get the data.
+			
+			Returns
+			-------
+			trigger_times: list
+				A list of trigger times in seconds from the first trigger.
+			"""
+			_validate_channel_number(channel)
+			raw = self.query(f"VBS? 'return=app.Acquisition.Channels(\"C{channel}\").TriggerTimeFromRef'") # To know this command I used the `XStream Browser` app in the oscilloscope's desktop.
+			raw = [int(i) for i in raw.split(',') if i != '']
+			datetimes = [datetime.datetime.fromtimestamp(i/1e10) for i in raw] # Don't know why we have to divide by 1e10, but it works...
+			datetimes = [i-datetimes[0] for i in datetimes]
+			return [i.total_seconds() for i in datetimes]
+
+		
+		def set_vdiv(self, channel: int, vdiv: float):
+			"""Sets the vertical scale for the specified channel."""
+			try:
+				vdiv = float(vdiv)
+			except:
+				raise TypeError(f'<vdiv> must be a float number, received object of type {type(vdiv)}.')
+			_validate_channel_number(channel)
+			self.write(f'C{channel}:VDIV {float(vdiv)}') # http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=47
+
+		def set_voffset(self, channel: int, voffset: float):
+			"""Sets the vertical offset for the specified channel."""
+			try:
+				voffset = float(voffset)
+			except:
+				raise TypeError(f'<voffset> must be a float number, received object of type {type(voffset)}.')
+			_validate_channel_number(channel)
+			self.write(f'C{channel}:OFST {float(voffset)}') # http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=43
+		
+		def set_tdiv(self, tdiv: str):
+			"""Sets the horizontal scale per division for the main window."""
+			# See http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=151
+			VALID_TDIVs = ['1NS','2NS','5NS','10NS','20NS','50NS','100NS','200NS','500NS','1US','2US','5US','10US','20US','50US','100US','200US','500US','1MS','2MS','5MS','10MS','20MS','50MS','100MS','200MS','500MS','1S','2S','5S','10S','20S','50S','100S']
+			if not isinstance(tdiv, str) or tdiv.lower() not in {t.lower() for t in VALID_TDIVs}:
+				raise ValueError(f'tdiv must be one of {VALID_TDIVs}, received {repr(tdiv)}.')
+			self.write(f'TDIV {tdiv}')
+
+		def get_vdiv(self, channel: int):
+			"""Gets the vertical scale of the specified channel. Returns a 
+			float number with the volts/div value."""
+			_validate_channel_number(channel)
+			return float(self.query(f'C{channel}:VDIV?')) # http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=47
+	
