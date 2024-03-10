@@ -5,17 +5,8 @@ import datetime
 import struct
 import warnings
 
-def _validate_channel_number(channel):
-	CHANNEL_NUMBERS = {1,2,3,4}
-	if channel not in CHANNEL_NUMBERS:
-		raise ValueError(f'<channel> must be in {CHANNEL_NUMBERS}')
 
-def _validate_trig_source(trig_source):
-	TRIG_SOURCES_VALID = {'C1','C2','C3','C4','Ext','Line','FastEdge'}
-	if not isinstance(trig_source, str):
-		raise TypeError(f'The trigger source must be a string, received object of type {type(trig_source)}.')
-	if trig_source.lower() not in {t.lower() for t in TRIG_SOURCES_VALID}:
-		raise ValueError(f'The trigger source must be one of {TRIG_SOURCES_VALID}, received {repr(trig_source)}...')
+
 
 TYPES_LENGTH_IN_LECROY_2_3 = {
 	# This is in accordance with the specification in `LECROY_2_3:  TEMPLATE`, query the command `'TMPL?'` to a LeCroy oscilloscope for more information.
@@ -484,7 +475,7 @@ class LeCroyWaveRunner:
 		self.write('CHDR OFF') # This is to receive only numerical data in the answers and not also the echo of the command and some other stuff. See p. 22 of http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf
 
 	
-	@property
+
 	def idn(self):
 		"""Returns the name of the instrument, i.e. its answer to the
 		command "*IDN?"."""
@@ -505,10 +496,7 @@ class LeCroyWaveRunner:
 		return response
 	
 	def query(self, msg):
-		"""Sends a command to the instrument and immediately reads the
-		answer."""
-		self.write(msg)
-		return self.read()
+		return 	self.resource.query(msg)
 	
 	def waitTrigger(self,timeout=-1):
 		"""Sets the trigger in 'SINGLE' and blocks the execution of the
@@ -527,7 +515,15 @@ class LeCroyWaveRunner:
 				raise RuntimeError(f'Timed out waiting for oscilloscope to trigger after {timeout} seconds.')
 	
 	def trigMode(self, mode: str):
-		"""Sets the trigger mode."""
+		"""Sets the trigger mode.
+		Parameterers
+		------------
+		mode : str
+		AUTO
+		NORM
+		STOP
+		SINGLE
+		"""
 		OPTIONS = ['AUTO', 'NORM', 'STOP', 'SINGLE']
 		if mode.upper() not in OPTIONS:
 			raise ValueError('<mode> must be one of ' + str(OPTIONS))
@@ -542,39 +538,36 @@ class LeCroyWaveRunner:
 	def trigSource(self, source: str):
 		"""Sets the trigger source (C1, C2, Ext, etc.)."""
 		# See http://cdn.teledynelecroy.com/files/manuals/automation_command_ref_manual_ws.pdf#page=34
-		_validate_trig_source(source)
 		string = "VBS 'app.Acquisition.Trigger.Source = "
 		string += '"' + source + '"'
 		string += "'"
 		self.write(string)
-	
+	@property
+	def trigCoupling(self):
+		return self.write('TRIG_COUPLING?')
+
+	@trigCoupling.setter
 	def trigCoupling(self, trig_source: str, trig_coupling: str):
-		"""Set the trigger coupling (DC, AC, etc.)."""
-		# See http://cdn.teledynelecroy.com/files/manuals/automation_command_ref_manual_ws.pdf#page=37
-		_validate_trig_source(trig_source)
-		VALID_TRIG_COUPLINGS = {'AC','DC','HFREJ','LFREJ'}
-		if not isinstance(trig_coupling, str) or trig_coupling.lower() not in {tc.lower() for tc in VALID_TRIG_COUPLINGS}:
-			raise ValueError(f'The trigger coupling must be one of {VALID_TRIG_COUPLINGS}, received {repr(trig_coupling)}...')
-		string = f"VBS 'app.Acquisition.Trigger.{trig_source}.Coupling = "
-		string += '"' + trig_coupling + '"'
-		string += "'"
-		self.write(string)
+		"""Set the trigger coupling .
+			Parameterers
+			------------
+			trig_source : str
+			C1,C2,C3,C4,EX,EX5
+			trig_coupling: str
+			AC,DC,HFREJ,LFREJ
+		"""
+		# See http://cdn.teledynelecroy.com/files/manuals/automation_command_ref_manual_ws.pdf#page=152
+		self.write(f'{trig_source}:TRCP {trig_coupling}')
 	
 	def trigLevel(self, trig_source: str, level: float):
 		"""Set the trigger level."""
-		# See http://cdn.teledynelecroy.com/files/manuals/automation_command_ref_manual_ws.pdf#page=36
-		_validate_trig_source(trig_source)
-		if not isinstance(level, (float, int)):
-			raise ValueError(f'The trigger level must be a float number, received object of type {type(level)}.')
-		string = f"VBS 'app.Acquisition.Trigger.{trig_source}.Level = "
-		string += '"' + str(level) + '"'
-		string += "'"
-		self.write(string)
+		# See http://cdn.teledynelecroy.com/files/manuals/automation_command_ref_manual_ws.pdf#page=161
+		self.write(f'{trig_source}:TRLV {level}')
 	
 	def trigSlope(self, trig_source: str, trig_slope: str):
 		"""Set the trigger slope (Positive, negative, either)."""
 		# See http://cdn.teledynelecroy.com/files/manuals/automation_command_ref_manual_ws.pdf#page=36
-		_validate_trig_source(trig_source)
+
 		VALID_TRIG_SLOPES = {'Positive', 'Negative', 'Either'}
 		if not isinstance(trig_slope, str) or trig_slope.lower() not in {tslp.lower() for tslp in VALID_TRIG_SLOPES}:
 			raise ValueError(f'The trigger coupling must be one of {VALID_TRIG_SLOPES}, received {repr(trig_slope)}...')
@@ -630,6 +623,7 @@ class LeCroyWaveRunner:
 		self.write(f"VBS 'app.Acquisition.Horizontal.SequenceTimeout = {sequence_timeout}'")
 		self.write(f"VBS 'app.Acquisition.Horizontal.SequenceTimeoutEnable = {enable_sequence_timeout}'")
 
+
 	class Channel:
 
 		def __init__(self,channel:int):
@@ -674,11 +668,9 @@ class LeCroyWaveRunner:
 				on these read the text that the oscilloscope provides by
 				querying `'TMPL?'`.
 			"""
-			_validate_channel_number(self._channel)
 			
 			self.write('CORD HI') # High-Byte first
 			self.write('COMM_FORMAT DEF9,WORD,BIN') # Communication Format: DEF9 (this is the #9 specification; WORD (reads the samples as 2 Byte integer; BIN (reads in Binary)
-			self.write('CHDR OFF') # Command Header OFF (fewer characters to transfer)
 			self.write(f'C{self._channel}:WF?')
 			time.sleep(.1)
 			raw_bytes = self.resource.read_raw()
@@ -707,7 +699,7 @@ class LeCroyWaveRunner:
 				'waveforms': [{'Time (s)': t, f'Amplitude ({parsed_wavedesc_block["VERTUNIT"]})': s} for t,s in zip(times,samples)],
 			}
 			
-		def triggerTimeas(self, int)->list:
+		def triggerTimes(self, int)->list:
 			"""Gets the trigger times (with respect to the first trigger). What
 			this function returns is the list of numbers you find if you go
 			in the oscilloscope window to "Timebase→Sequence→Show Sequence Trigger Times...→since Segment 1"
@@ -722,7 +714,7 @@ class LeCroyWaveRunner:
 			trigger_times: list
 				A list of trigger times in seconds from the first trigger.
 			"""
-			_validate_channel_number(self._channel)
+
 			raw = self.query(f"VBS? 'return=app.Acquisition.Channels(\"C{self._channel}\").TriggerTimeFromRef'") # To know this command I used the `XStream Browser` app in the oscilloscope's desktop.
 			raw = [int(i) for i in raw.split(',') if i != '']
 			datetimes = [datetime.datetime.fromtimestamp(i/1e10) for i in raw] # Don't know why we have to divide by 1e10, but it works...
@@ -732,7 +724,7 @@ class LeCroyWaveRunner:
 		def vdiv(self):
 			"""Gets the vertical scale of the specified channel. Returns a 
 			float number with the volts/div value."""
-			_validate_channel_number(self._channel)
+
 			return float(self.query(f'C{self._channel}:VDIV?')) # http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=47
 	
 		@vdiv.setter
@@ -742,7 +734,7 @@ class LeCroyWaveRunner:
 				vdiv = float(vdiv)
 			except:
 				raise TypeError(f'<vdiv> must be a float number, received object of type {type(vdiv)}.')
-			_validate_channel_number(self._channel)
+
 			self.write(f'C{self._channel}:VDIV {float(vdiv)}') # http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=47
 
 		def voffset(self, voffset: float):
@@ -751,10 +743,10 @@ class LeCroyWaveRunner:
 				voffset = float(voffset)
 			except:
 				raise TypeError(f'<voffset> must be a float number, received object of type {type(voffset)}.')
-			_validate_channel_number(self._channel)
+
 			self.write(f'C{self._channel}:OFST {float(voffset)}') # http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=43
 		
-		def set_tdiv(self, tdiv: str):
+		def tdiv(self, tdiv: str):
 			"""Sets the horizontal scale per division for the main window."""
 			# See http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=151
 			VALID_TDIVs = ['1NS','2NS','5NS','10NS','20NS','50NS','100NS','200NS','500NS','1US','2US','5US','10US','20US','50US','100US','200US','500US','1MS','2MS','5MS','10MS','20MS','50MS','100MS','200MS','500MS','1S','2S','5S','10S','20S','50S','100S']
