@@ -471,7 +471,10 @@ class LeCroyWaveRunner:
 		except:
 				print('Pyvisa not installed')
 				raise
-		
+		self.ch1= self.Channel(self.rm,1)
+		self.ch2= self.Channel(self.rm,2)
+		self.ch3= self.Channel(self.rm,3)
+		self.ch4= self.Channel(self.rm,4)
 		self.write('CHDR OFF') # This is to receive only numerical data in the answers and not also the echo of the command and some other stuff. See p. 22 of http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf
 
 	
@@ -524,41 +527,44 @@ class LeCroyWaveRunner:
 		"""Sets the trigger mode.
 		Parameterers
 		------------
-		mode : str
-		AUTO,NORM,SINGLE,STOP
-		• NORM — When NORMAL If the trigger signal is satisfied,
-		the running state shows Trig'd, and the interface shows
-		stable waveform.
-		Otherwise, the running state shows Ready, and
-		the interface displays the last triggered
-		waveform (previous trigger) or does not
-		display the waveform (no previous trigger)
-		• SINGLE —If the trigger signal is satisfied, the running
-		state shows Trig'd, and the interface shows
-		stable waveform. Then, the oscilloscope stops
-		scanning, the RUN/STOP key is red light, and
-		the running status shows Stop.
+			mode : str
+			AUTO,NORM,SINGLE,STOP
+			• NORM — When NORMAL If the trigger signal is satisfied,
+			the running state shows Trig'd, and the interface shows
+			stable waveform.
+			Otherwise, the running state shows Ready, and
+			the interface displays the last triggered
+			waveform (previous trigger) or does not
+			display the waveform (no previous trigger)
+			• SINGLE —If the trigger signal is satisfied, the running
+			state shows Trig'd, and the interface shows
+			stable waveform. Then, the oscilloscope stops
+			scanning, the RUN/STOP key is red light, and
+			the running status shows Stop.
 		"""
-		self.write(f'TRIG_MODE {mode}')
+		self.write(f'TRMD {mode}')
 
 	@property
-	def trigSource(self):
+	def trigSelect(self):
 		"""Returns the trigger source as a string."""
-		# See http://cdn.teledynelecroy.com/files/manuals/automation_command_ref_manual_ws.pdf#page=34
-		return str(self.query("VBS? 'return=app.Acquisition.Trigger.Source'"))
+		return (self.query("TRIG_SELECT?"))
 	
-	@trigSource.setter
-	def trigSource(self, source: str):
-		"""Sets the trigger source (C1, C2, Ext, etc.)."""
-		# See http://cdn.teledynelecroy.com/files/manuals/automation_command_ref_manual_ws.pdf#page=34
-		string = "VBS 'app.Acquisition.Trigger.Source = "
-		string += '"' + source + '"'
-		string += "'"
-		self.write(string)
+	@trigSelect.setter
+	def trigSelect(self,trig_type:str , trig_source: str):
+		"""Sets the trigger conditions
+		Parameterers
+		------------
+		trig_type: str
+		Dropout:DROP,Edge:EDGE,GLIT,Single-source:SNG,Standard:STD
+		trig_source : str
+		C1,C2,C3,C4,EX,EX5
+		  """
+		# See https://cdn.teledynelecroy.com/files/manuals/maui-remote-control-and-automation-manual.pdf#page=241
+		self.write(f'TRSE {trig_type},SR,{trig_source} ')
 
 	@property
 	def trigCoupling(self):
-		return self.write('TRIG_COUPLING?')
+		return self.query('TRIG_COUPLING?')
 
 	@trigCoupling.setter
 	def trigCoupling(self, trig_source: str, trig_coupling: str):
@@ -572,23 +578,42 @@ class LeCroyWaveRunner:
 		"""
 		# See http://cdn.teledynelecroy.com/files/manuals/automation_command_ref_manual_ws.pdf#page=152
 		self.write(f'{trig_source}:TRCP {trig_coupling}')
-	
+	@property
+	def trigLevel(self):
+		return self.query(f'TRIG_LEVEL?')
+		
+	@trigLevel.setter
 	def trigLevel(self, trig_source: str, level: float):
-		"""Set the trigger level."""
-		# See http://cdn.teledynelecroy.com/files/manuals/automation_command_ref_manual_ws.pdf#page=161
+		"""Set the trigger level.
+		Parameterers
+		------------
+		trig_source : str
+		C1,C2,C3,C4,EX,EX5
+		trig_coupling: float """
+
+		# See https://cdn.teledynelecroy.com/files/manuals/maui-remote-control-and-automation-manual.pdf#page=237
 		self.write(f'{trig_source}:TRLV {level}')
 	
-	def trigSlope(self, trig_source: str, trig_slope: str):
-		"""Set the trigger slope (Positive, negative, either)."""
-		# See http://cdn.teledynelecroy.com/files/manuals/automation_command_ref_manual_ws.pdf#page=36
+	@property
+	def trigSlope(self):
+		# See https://cdn.teledynelecroy.com/files/manuals/maui-remote-control-and-automation-manual.pdf#page=244
+		self.query("TRIG_SLOPE?")
 
-		VALID_TRIG_SLOPES = {'Positive', 'Negative', 'Either'}
+	@trigSlope.setter
+	def trigSlope(self, trig_source: str, trig_slope: str):
+		"""Set the trigger slope.
+		Parameterers
+		------------
+		trig_source : str
+		C1,C2,C3,C4,EX,EX5
+		trig_slope : str
+		Positive, negative.
+		"""
+		# See https://cdn.teledynelecroy.com/files/manuals/maui-remote-control-and-automation-manual.pdf#page=244
+		VALID_TRIG_SLOPES = {'POS', 'NEG'}
 		if not isinstance(trig_slope, str) or trig_slope.lower() not in {tslp.lower() for tslp in VALID_TRIG_SLOPES}:
 			raise ValueError(f'The trigger coupling must be one of {VALID_TRIG_SLOPES}, received {repr(trig_slope)}...')
-		string = f"VBS 'app.Acquisition.Trigger.{trig_source}.Slope = "
-		string += '"' + trig_slope + '"'
-		string += "'"
-		self.write(string)
+		self.write(f'{trig_source}:TRSL {trig_slope}')
 	
 	def trigDelay(self, trig_delay: float):
 		"""Set the trig delay, i.e. the time interval between the trigger event and the center of the screen."""
@@ -640,8 +665,9 @@ class LeCroyWaveRunner:
 
 	class Channel:
 
-		def __init__(self,channel:int):
+		def __init__(self,resource, channel:int):
 			self._channel= channel
+			self._osc=resource
 
 		def get_waveform(self)->dict:
 			"""Gets the waveform(s) from the specified channel.
@@ -683,11 +709,9 @@ class LeCroyWaveRunner:
 				querying `'TMPL?'`.
 			"""
 			
-			self.write('CORD HI') # High-Byte first
-			self.write('COMM_FORMAT DEF9,WORD,BIN') # Communication Format: DEF9 (this is the #9 specification; WORD (reads the samples as 2 Byte integer; BIN (reads in Binary)
-			self.write(f'C{self._channel}:WF?')
-			time.sleep(.1)
-			raw_bytes = self.resource.read_raw()
+			self._osc.write('CORD HI') # High-Byte first
+			self._osc.write('COMM_FORMAT DEF9,WORD,BIN') # Communication Format: DEF9 (this is the #9 specification; WORD (reads the samples as 2 Byte integer; BIN (reads in Binary)
+			raw_bytes = self._osc.query(f'C{self._channel}:WF?')
 			raw_bytes = raw_bytes[15:] # This I don't understand, the first 15 bytes are some kind of garbage... But this is happening always.
 			
 			parsed_wavedesc_block = parse_wavedesc_block(raw_bytes)
@@ -713,15 +737,11 @@ class LeCroyWaveRunner:
 				'waveforms': [{'Time (s)': t, f'Amplitude ({parsed_wavedesc_block["VERTUNIT"]})': s} for t,s in zip(times,samples)],
 			}
 			
-		def triggerTimes(self, int)->list:
+		def triggerTimes(self)->list:
 			"""Gets the trigger times (with respect to the first trigger). What
 			this function returns is the list of numbers you find if you go
 			in the oscilloscope window to "Timebase→Sequence→Show Sequence Trigger Times...→since Segment 1"
 			
-			Arguments
-			---------
-			channel: int
-				Number of channel from which to get the data.
 			
 			Returns
 			-------
@@ -729,7 +749,7 @@ class LeCroyWaveRunner:
 				A list of trigger times in seconds from the first trigger.
 			"""
 
-			raw = self.query(f"VBS? 'return=app.Acquisition.Channels(\"C{self._channel}\").TriggerTimeFromRef'") # To know this command I used the `XStream Browser` app in the oscilloscope's desktop.
+			raw = self._osc.query(f"VBS? 'return=app.Acquisition.Channels(\"C{self._channel}\").TriggerTimeFromRef'") # To know this command I used the `XStream Browser` app in the oscilloscope's desktop.
 			raw = [int(i) for i in raw.split(',') if i != '']
 			datetimes = [datetime.datetime.fromtimestamp(i/1e10) for i in raw] # Don't know why we have to divide by 1e10, but it works...
 			datetimes = [i-datetimes[0] for i in datetimes]
@@ -739,7 +759,7 @@ class LeCroyWaveRunner:
 			"""Gets the vertical scale of the specified channel. Returns a 
 			float number with the volts/div value."""
 
-			return float(self.query(f'C{self._channel}:VDIV?')) # http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=47
+			return float(self._osc.query(f'C{self._channel}:VDIV?')) # http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=47
 	
 		@vdiv.setter
 		def vdiv(self, vdiv: float):
@@ -749,7 +769,7 @@ class LeCroyWaveRunner:
 			except:
 				raise TypeError(f'<vdiv> must be a float number, received object of type {type(vdiv)}.')
 
-			self.write(f'C{self._channel}:VDIV {float(vdiv)}') # http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=47
+			self._osc.write(f'C{self._channel}:VDIV {float(vdiv)}') # http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=47
 
 		def voffset(self, voffset: float):
 			"""Sets the vertical offset for the specified channel."""
@@ -759,12 +779,19 @@ class LeCroyWaveRunner:
 				raise TypeError(f'<voffset> must be a float number, received object of type {type(voffset)}.')
 
 			self.write(f'C{self._channel}:OFST {float(voffset)}') # http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=43
-		
+
+
+
+
 		def tdiv(self, tdiv: str):
-			"""Sets the horizontal scale per division for the main window."""
-			# See http://cdn.teledynelecroy.com/files/manuals/tds031000-2000_programming_manual.pdf#page=151
-			VALID_TDIVs = ['1NS','2NS','5NS','10NS','20NS','50NS','100NS','200NS','500NS','1US','2US','5US','10US','20US','50US','100US','200US','500US','1MS','2MS','5MS','10MS','20MS','50MS','100MS','200MS','500MS','1S','2S','5S','10S','20S','50S','100S']
-			if not isinstance(tdiv, str) or tdiv.lower() not in {t.lower() for t in VALID_TDIVs}:
-				raise ValueError(f'tdiv must be one of {VALID_TDIVs}, received {repr(tdiv)}.')
-			self.write(f'TDIV {tdiv}')
+			"""Sets the horizontal scale per division for the main window.
+			Parameterers
+			------------
+			 '1NS','2NS','5NS','10NS','20NS','50NS','100NS','200NS','500NS',
+			 '1US','2US','5US','10US','20US','50US','100US','200US','500US',
+			 '1MS','2MS','5MS','10MS','20MS','50MS','100MS','200MS','500MS',
+			 '1S','2S','5S','10S','20S','50S','100S' 
+			"""
+			# See https://cdn.teledynelecroy.com/files/manuals/maui-remote-control-and-automation-manual.pdf#page=233
+			self._osc.write(f'TDIV {tdiv}')
 
